@@ -1,0 +1,791 @@
+<!doctype html>
+<!--
+  Quick Take: A full-bleed pixel dungeon: every minute is a miniboss floor.
+  Stack: Self-contained; no external libraries.
+  Source: https://datapoems.io/clocks/pixel-dungeon/
+  License: MIT
+  Author: Luke Steuber
+-->
+<html class="collection-export embed" lang="en">
+<head>
+<script>window.CLOCK_COLLECTION_EXPORT=true;</script>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>Dungeon Loop — Pixel Roguelike Clock</title>
+<meta name="description" content="A full-bleed pixel dungeon: every minute is a miniboss floor. Wall braziers hold the hour, floor runes count the minute, and a carved lintel shows exact local time.">
+<meta name="theme-color" content="#0a090f">
+<style>
+:root{color-scheme:dark;--void:#0a090f}
+*{box-sizing:border-box}
+html,body{width:100%;height:100%;margin:0;overflow:hidden;background:var(--void)}
+canvas{
+  display:block;width:100vw;height:100vh;
+  image-rendering:pixelated;image-rendering:crisp-edges;
+  background:var(--void)
+}
+.fallback{
+  position:fixed;inset:0;display:grid;place-items:center;
+  margin:0;padding:2rem;background:#0a090f;color:#f2e5bd;
+  font:14px/1.5 ui-monospace,SFMono-Regular,Menlo,monospace;text-align:center
+}
+.fallback[hidden]{display:none}
+.fallback time{
+  display:block;margin-top:.55rem;color:#42c6b7;
+  font-size:clamp(1.5rem,7vw,3.4rem);font-weight:800;
+  letter-spacing:.1em;font-variant-numeric:tabular-nums
+}
+.sr-only{
+  position:absolute;width:1px;height:1px;padding:0;margin:-1px;
+  overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap;border:0
+}
+@media(prefers-reduced-motion:reduce){
+  canvas{/* discrete redraws only via JS */}
+}
+</style>
+<style data-collection-chrome>
+.dev-controls,
+.study-controls,
+.help,
+.back,
+.about-backdrop,
+.about-modal,
+.about-card,
+.gate-controls,
+a[aria-label*='about' i],
+button[aria-label*='about' i],
+a[aria-label*='help' i],
+button[aria-label*='help' i],
+a[aria-label*='all clocks' i],
+button[aria-label*='all clocks' i],
+a[aria-label*='clock gallery' i],
+button[aria-label*='clock gallery' i]{display:none!important}
+</style>
+</head>
+<body class="collection-export embed">
+<canvas id="screen" role="img" tabindex="0" aria-label="Loading Dungeon Loop — a full-bleed pixel roguelike clock."></canvas>
+<p id="fallback" class="fallback" hidden>Canvas 2D is unavailable.<time id="fallbackTime" datetime="">00:00:00</time></p>
+<time id="exact" class="sr-only" datetime="">00:00:00</time>
+<p id="live" class="sr-only" aria-live="polite" aria-atomic="true">Loading local time.</p>
+<script>
+(function(){
+"use strict";
+
+var canvas=document.getElementById("screen");
+var exact=document.getElementById("exact");
+var live=document.getElementById("live");
+var fallback=document.getElementById("fallback");
+var fallbackTime=document.getElementById("fallbackTime");
+var ctx=null;
+try{ctx=canvas.getContext&&canvas.getContext("2d")}catch(e){ctx=null}
+
+var motion=matchMedia("(prefers-reduced-motion: reduce)");
+var reduced=motion.matches;
+var portrait=false,W=360,H=202,SCALE=2,CW=720,CH=404;
+var raf=0,timer=0,lastDraw=0,lastAriaSecond=-1,activeMinute=-1;
+var storageOK=true,catchupCount=0,progress=null,encounter=null;
+var sparks=[],embers=[];
+
+var STORAGE_KEY="pixelDungeon.progress.v2",MAX_CATCHUP=180;
+
+var C={
+  void:"#0a090f",deep:"#12101a",floor0:"#1a1c28",floor1:"#212335",
+  mortar:"#0c0c14",stone:"#363a4e",stoneHi:"#5a5f76",stoneLo:"#242636",
+  brick:"#2c3042",brickHi:"#3e4358",brickLo:"#1c1e2c",
+  rune:"#52d9c9",runeDim:"#2a6570",runeGlow:"#a8fff0",
+  gold:"#f0b85a",ember:"#ffe08a",flame:"#ffaa55",flameCore:"#fff8c8",
+  hero:"#fff6dc",cloak:"#8f4d68",cloakHi:"#b86a88",
+  danger:"#d45f67",bone:"#c4bba8",shadow:"#050508",
+  heal:"#88e8a4",magic:"#7f83e8",ice:"#78cbe3",poison:"#71b86a",
+  parch:"#fff6dc",dim:"#9aa0b8",door:"#3a2a1c",doorHi:"#8a6040",
+  blood:"#6a2030",moss:"#2a4030"
+};
+
+var BOSSES=[
+  {name:"Ember Warden",attack:"Cinder Cleave",kind:0,color:"#d85a45"},
+  {name:"Mire Oracle",attack:"Venom Psalm",kind:1,color:"#71b86a"},
+  {name:"Bone Tollkeeper",attack:"Skull Bell",kind:2,color:"#b8b0a0"},
+  {name:"Mirror Knight",attack:"Reflected Edge",kind:3,color:"#7f83e8"},
+  {name:"Clockwork Basilisk",attack:"Gearbite",kind:4,color:"#d59b43"},
+  {name:"Storm Archivist",attack:"Static Index",kind:5,color:"#78cbe3"},
+  {name:"Lantern Mimic",attack:"False Light",kind:6,color:"#e0a84c"},
+  {name:"Frost Matron",attack:"Whiteout",kind:7,color:"#a6d9e8"},
+  {name:"Void Corsair",attack:"Rift Broadside",kind:8,color:"#aa62c7"}
+];
+
+var LOOT={
+  weapon:["Ashfang","Moon Pike","Runic Cleaver","Volt Rapier","Grave Key"],
+  armor:["Cinder Mail","Mireguard","Mirror Plate","Frostweave","Corsair Hide"],
+  relic:["Storm Sigil","Bone Bell","Glass Eye","Sun Coin","Void Compass"]
+};
+
+/* 5×7 bitmap glyphs — crisp at integer scale, no vector blur */
+var GLYPH={
+  "0":["01110","10001","10011","10101","11001","10001","01110"],
+  "1":["00100","01100","00100","00100","00100","00100","01110"],
+  "2":["01110","10001","00001","00010","00100","01000","11111"],
+  "3":["01110","10001","00001","00110","00001","10001","01110"],
+  "4":["00010","00110","01010","10010","11111","00010","00010"],
+  "5":["11111","10000","11110","00001","00001","10001","01110"],
+  "6":["00110","01000","10000","11110","10001","10001","01110"],
+  "7":["11111","00001","00010","00100","01000","01000","01000"],
+  "8":["01110","10001","10001","01110","10001","10001","01110"],
+  "9":["01110","10001","10001","01111","00001","00010","01100"],
+  ":":["00000","00100","00100","00000","00100","00100","00000"],
+  "·":["00000","00000","00100","00000","00100","00000","00000"],
+  "A":["01110","10001","10001","11111","10001","10001","10001"],
+  "B":["11110","10001","10001","11110","10001","10001","11110"],
+  "E":["11111","10000","10000","11110","10000","10000","11111"],
+  "F":["11111","10000","10000","11110","10000","10000","10000"],
+  "H":["10001","10001","10001","11111","10001","10001","10001"],
+  "I":["01110","00100","00100","00100","00100","00100","01110"],
+  "L":["10000","10000","10000","10000","10000","10000","11111"],
+  "M":["10001","11011","10101","10001","10001","10001","10001"],
+  "N":["10001","11001","10101","10011","10001","10001","10001"],
+  "O":["01110","10001","10001","10001","10001","10001","01110"],
+  "P":["11110","10001","10001","11110","10000","10000","10000"],
+  "R":["11110","10001","10001","11110","10100","10001","10001"],
+  "S":["01111","10000","10000","01110","00001","00001","11110"],
+  "T":["11111","00100","00100","00100","00100","00100","00100"],
+  "U":["10001","10001","10001","10001","10001","10001","01110"],
+  "X":["10001","10001","01010","00100","01010","10001","10001"]
+};
+
+function pad(n){return String(n).padStart(2,"0")}
+function stamp(n){return pad(n.getHours())+":"+pad(n.getMinutes())+":"+pad(n.getSeconds())}
+function minuteId(n){return Math.floor(n.getTime()/60000)}
+function hash(n){n=(n^61)^(n>>>16);n=Math.imul(n,9);n=n^(n>>>4);n=Math.imul(n,0x27d4eb2d);return(n^(n>>>15))>>>0}
+function lerp(a,b,t){return a+(b-a)*t}
+function clamp(v,a,b){return v<a?a:v>b?b:v}
+function easeInOut(t){return t<.5?2*t*t:1-Math.pow(-2*t+2,2)/2}
+
+function baseProgress(id){
+  return{v:2,settled:id-1,floor:1,gear:{
+    weapon:{name:"Worn Blade",rank:0},
+    armor:{name:"Travel Coat",rank:0},
+    relic:{name:"Blank Charm",rank:0}
+  }};
+}
+function validProgress(p){
+  var baseNames={weapon:"Worn Blade",armor:"Travel Coat",relic:"Blank Charm"};
+  return p&&p.v===2&&Number.isFinite(p.settled)&&Number.isFinite(p.floor)&&p.floor>0&&p.gear&&
+    ["weapon","armor","relic"].every(function(k){
+      return p.gear[k]&&(p.gear[k].name===baseNames[k]||LOOT[k].indexOf(p.gear[k].name)>=0)&&
+        Number.isFinite(p.gear[k].rank)&&p.gear[k].rank>=0&&p.gear[k].rank<=MAX_CATCHUP*20;
+    });
+}
+function loadProgress(id){
+  var p;
+  try{var raw=localStorage.getItem(STORAGE_KEY);p=raw?JSON.parse(raw):null;storageOK=true}
+  catch(e){storageOK=false}
+  return validProgress(p)?p:baseProgress(id);
+}
+function saveProgress(){
+  if(!storageOK)return;
+  try{localStorage.setItem(STORAGE_KEY,JSON.stringify(progress))}catch(e){storageOK=false}
+}
+function statsFor(p){
+  return{
+    power:7+p.gear.weapon.rank*3+p.gear.relic.rank,
+    defense:5+p.gear.armor.rank*3,
+    vitality:9+p.gear.armor.rank+p.gear.relic.rank*2
+  };
+}
+function runInfo(){return{run:Math.floor((progress.floor-1)/12)+1,floor:(progress.floor-1)%12+1}}
+function rewardFor(id,floor,p){
+  var seed=hash(id+floor*7919),slots=["weapon","armor","relic"],slot=slots[seed%3],list=LOOT[slot],rank=p.gear[slot].rank+1;
+  return{slot:slot,name:list[(seed>>>5)%list.length],rank:rank,quality:["sturdy","keen","radiant","mythic"][Math.min(3,Math.floor((rank-1)/4))]};
+}
+function encounterFor(id,floor){
+  var seed=hash(id*17+floor*101),boss=BOSSES[seed%BOSSES.length];
+  return{name:boss.name,attack:boss.attack,kind:boss.kind,color:boss.color,seed:seed,maxHP:90+Math.min(420,floor*7),reward:rewardFor(id,floor,progress)};
+}
+function settleFloor(id){
+  var reward=rewardFor(id,progress.floor,progress);
+  progress.gear[reward.slot]={name:reward.name,rank:reward.rank};
+  progress.floor++;
+  progress.settled=id;
+  return reward;
+}
+function syncProgress(id){
+  var target=id-1,missing=target-progress.settled;
+  if(missing<=0)return null;
+  var count=Math.min(MAX_CATCHUP,missing),start=target-count+1,reward=null;
+  if(missing>MAX_CATCHUP)progress.settled=start-1;
+  for(var m=progress.settled+1;m<=target;m++)reward=settleFloor(m);
+  catchupCount=count;
+  saveProgress();
+  return reward;
+}
+
+/* ── Combat timeline (one floor = one civil minute) ─────────────── */
+function combatAt(now){
+  var s=now.getSeconds()+(reduced?0:now.getMilliseconds()/1000);
+  var boss=1,hero=1,phase="APPROACH",action="The gate seals",effect="none",shake=0;
+  if(s<7){
+    phase="APPROACH";
+    action=s<2.5?"Entering the chamber":"Boss sighted";
+  }else if(s<13){
+    phase="EXCHANGE I";boss=1-(s-7)/6*.18;action=progress.gear.weapon.name;effect="hero";shake=.4;
+  }else if(s<18){
+    phase="EXCHANGE I";boss=.82;hero=1-(s-13)/5*.17;action=encounter.attack;effect="boss";shake=.55;
+  }else if(s<24){
+    phase="EXCHANGE II";boss=.82-(s-18)/6*.24;hero=.83;action="Parry · riposte";effect="hero";shake=.5;
+  }else if(s<30){
+    phase="EXCHANGE II";boss=.58;hero=.83-(s-24)/6*.2;action=encounter.attack;effect="boss";shake=.65;
+  }else if(s<36){
+    phase="EXCHANGE III";boss=.58-(s-30)/6*.3;hero=.63;action=progress.gear.relic.name;effect="magic";shake=.35;
+  }else if(s<42){
+    phase="EXCHANGE III";boss=.28;hero=.63-(s-36)/6*.13;action="Armor holds";effect="boss";shake=.45;
+  }else if(s<49){
+    phase="FINISHER";boss=.28-(s-42)/7*.28;hero=.5;action=s<46?"Charge finisher":"MINIBOSS FALLEN";effect="finish";shake=s<46?.9:.2;
+  }else if(s<55){
+    phase="LOOT";boss=0;hero=.5+(s-49)/6*.5;action=encounter.reward.quality+" "+encounter.reward.name;effect="loot";
+  }else{
+    phase="EXIT";boss=0;hero=1;action=s<58?"Gate opens":"Next floor";effect="exit";
+  }
+  return{s:s,boss:Math.max(0,boss),hero:Math.max(0,hero),phase:phase,action:action,effect:effect,shake:shake};
+}
+
+/* ── Drawing primitives ─────────────────────────────────────────── */
+function px(x,y,w,h,color){
+  ctx.fillStyle=color;
+  ctx.fillRect(x|0,y|0,Math.max(1,w|0),Math.max(1,h|0));
+}
+function text(value,x,y,color,size,align){
+  ctx.fillStyle=color;
+  ctx.font="700 "+(size||6)+"px ui-monospace,SFMono-Regular,Menlo,monospace";
+  ctx.textAlign=align||"left";
+  ctx.textBaseline="top";
+  ctx.fillText(value,x|0,y|0);
+}
+function drawGlyph(ch,x,y,color,gs){
+  var rows=GLYPH[ch];
+  if(!rows)return 0;
+  gs=gs||1;
+  for(var r=0;r<7;r++){
+    for(var c=0;c<5;c++){
+      if(rows[r].charAt(c)==="1")px(x+c*gs,y+r*gs,gs,gs,color);
+    }
+  }
+  return 5*gs;
+}
+function stringWidth(str,gs){
+  gs=gs||1;
+  return str.length*(6*gs)-gs;
+}
+function drawString(str,x,y,color,gs,align){
+  gs=gs||1;
+  var step=6*gs,total=stringWidth(str,gs),ox=x|0;
+  if(align==="center")ox=(x-total/2)|0;
+  else if(align==="right")ox=(x-total)|0;
+  for(var i=0;i<str.length;i++)drawGlyph(str.charAt(i),ox+i*step,y|0,color,gs);
+  return total;
+}
+function drawStringShadow(str,x,y,fg,bg,gs,align){
+  drawString(str,x-1,y,bg,gs,align);
+  drawString(str,x+1,y,bg,gs,align);
+  drawString(str,x,y-1,bg,gs,align);
+  drawString(str,x,y+1,bg,gs,align);
+  drawString(str,x,y,fg,gs,align);
+}
+function bar(x,y,w,h,value,fill,track){
+  px(x,y,w,h,C.shadow);
+  px(x+1,y+1,w-2,h-2,track||C.stoneLo);
+  var fw=Math.max(0,Math.round((w-2)*clamp(value,0,1)));
+  if(fw)px(x+1,y+1,fw,h-2,fill);
+}
+
+function flameAt(x,y,t,scale){
+  scale=scale||1;
+  var f=reduced?0:((t/90|0)+x)%3;
+  var rise=f===0?0:f===1?1:2;
+  px(x-1*scale,y+2,3*scale,2,C.stoneHi);
+  px(x-2*scale,y-rise,5*scale,4+rise,C.flame);
+  px(x-1*scale,y-1-rise,3*scale,3+rise,C.ember);
+  px(x,y-2-rise,1*scale,2+rise,C.flameCore);
+  if(!reduced&&f){
+    px(x-3*scale,y+1,1,1,C.ember);
+    px(x+3*scale,y,1,1,C.flame);
+  }
+}
+
+function spawnSparks(x,y,color,n){
+  if(reduced||sparks.length>48)return;
+  for(var i=0;i<n;i++){
+    sparks.push({
+      x:x,y:y,
+      vx:(Math.random()-.5)*2.4,
+      vy:-.8-Math.random()*1.8,
+      life:14+Math.random()*18|0,
+      color:color
+    });
+  }
+}
+function tickSparks(){
+  for(var i=sparks.length-1;i>=0;i--){
+    var s=sparks[i];
+    s.x+=s.vx;s.y+=s.vy;s.vy+=.08;s.life--;
+    if(s.life<=0)sparks.splice(i,1);
+    else px(s.x,s.y,2,2,s.color);
+  }
+}
+function tickEmbers(t){
+  if(!reduced&&embers.length<20&&(t/180|0)%5===0){
+    embers.push({x:20+Math.random()*(W-40),y:H*.55+Math.random()*20,vy:-.15-Math.random()*.25,life:40+Math.random()*50|0});
+  }
+  for(var i=embers.length-1;i>=0;i--){
+    var e=embers[i];
+    e.y+=e.vy;e.life--;
+    if(e.life<=0||e.y<20)embers.splice(i,1);
+    else px(e.x,e.y,1,1,e.life%6<3?C.ember:C.flame);
+  }
+}
+
+/* ── Scene layers ───────────────────────────────────────────────── */
+function drawChamber(now,t,c){
+  // Floor band holds minute rail + HP stones; portrait keeps combat dominant
+  var ground=portrait?Math.floor(H*.70):Math.floor(H*.66);
+  var hour=((now.getHours()%12)||12);
+  var minute=now.getMinutes();
+  var info=runInfo();
+
+  // Void + ceiling grit
+  px(0,0,W,H,C.void);
+  for(var gy=0;gy<16;gy+=2)px(0,gy,W,1,gy%4?C.deep:C.mortar);
+
+  // Back wall bricks
+  for(var by=16;by<ground-14;by+=7){
+    var rowOff=(by/7|0)%2?3:0;
+    for(var bx=-rowOff;bx<W;bx+=11){
+      var tone=((bx*3+by*5+encounter.seed)%7===0)?C.brickHi:C.brick;
+      if(((bx+by)*13+encounter.seed)%53===0)tone=C.moss;
+      px(bx,by,10,6,tone);
+      px(bx,by+5,10,1,C.brickLo);
+    }
+  }
+
+  // Side pillars framing the chamber
+  px(0,16,12,ground-16,C.stoneLo);
+  px(2,18,3,ground-22,C.stoneHi);
+  px(W-12,16,12,ground-16,C.stoneLo);
+  px(W-5,18,3,ground-22,C.stoneHi);
+
+  // Carved time tablet — bitmap digits, high contrast, sized to fill width
+  var timeStr=stamp(now),gTime=3;
+  var timeW=stringWidth(timeStr,gTime),timeH=7*gTime;
+  var tabW=timeW+14,tabH=timeH+10,tabX=(W-tabW)/2|0,tabY=5;
+  px(tabX-2,tabY-2,tabW+4,tabH+4,C.shadow);
+  px(tabX,tabY,tabW,tabH,C.stone);
+  px(tabX+2,tabY+2,tabW-4,tabH-4,C.brick);
+  px(tabX+3,tabY+3,tabW-6,1,C.stoneHi);
+  px(tabX+3,tabY+tabH-4,tabW-6,1,C.stoneLo);
+  drawStringShadow(timeStr,W/2,tabY+5,C.parch,C.shadow,gTime,"center");
+
+  // Run / floor etched on left pillar capital
+  var runStr="R"+pad(info.run)+"·F"+pad(info.floor);
+  px(2,tabY+2,34,13,C.mortar);
+  drawString(runStr,4,tabY+4,C.gold,1);
+
+  // 12 hour braziers on a shelf under the tablet (lit count = hour 1–12)
+  var shelfY=tabY+tabH+5;
+  px(16,shelfY+12,W-32,4,C.stone);
+  px(16,shelfY+13,W-32,1,C.stoneHi);
+  var bCount=12,bSpan=W-48,bStart=24;
+  for(var bi=0;bi<bCount;bi++){
+    var bx2=bStart+bi*(bSpan/(bCount-1));
+    var lit=bi<hour;
+    px(bx2-3,shelfY+4,7,9,C.stoneLo);
+    px(bx2-4,shelfY+2,9,3,C.stone);
+    if(lit){
+      flameAt(bx2,shelfY,t+bi*40,1.5);
+      px(bx2-4,shelfY+10,9,3,C.doorHi);
+      px(bx2-2,shelfY+11,5,1,C.ember);
+    }else{
+      px(bx2-2,shelfY+1,5,3,C.stoneHi);
+      px(bx2-1,shelfY,3,2,C.stoneLo);
+    }
+  }
+  // Hour legend at shelf ends
+  drawString("H",bStart-14,shelfY+2,C.gold,1);
+  drawString(String(hour),bStart-6,shelfY+2,C.parch,1);
+
+  // Floor tiles (shallow band — not a giant empty deck)
+  px(0,ground,W,H-ground,C.deep);
+  var tile=8,floorDepth=portrait?Math.min(H-ground,56):Math.min(H-ground,48);
+  for(var fy=ground;fy<ground+floorDepth;fy+=tile){
+    for(var fx=0;fx<W;fx+=tile){
+      var odd=((fx+fy)/tile|0)%2;
+      px(fx,fy,tile-1,tile-1,odd?C.floor0:C.floor1);
+    }
+  }
+  // Descent stairs into the void below the HUD band
+  if(ground+floorDepth<H){
+    var stairTop=ground+floorDepth;
+    for(var sy=0;sy<H-stairTop;sy+=4){
+      var inset=Math.min(40,sy*2);
+      px(inset,stairTop+sy,W-inset*2,3,sy%8?C.stoneLo:C.mortar);
+    }
+  }
+
+  // Minute rune rail — 60 stones; quint pillars + M legend for legibility
+  var railY=ground+2,railX=8,railW=W-16,railH=10;
+  px(railX-2,railY-2,railW+4,railH+4,C.mortar);
+  px(railX-1,railY-1,railW+2,railH+2,C.stoneLo);
+  px(railX-1,railY-1,railW+2,1,C.stoneHi);
+  var segStep=(railW-2)/59,segW=Math.max(3,segStep|0);
+  for(var mi=0;mi<60;mi++){
+    var rx=railX+1+mi*segStep;
+    var on=mi<minute;
+    var isFive=(mi+1)%5===0;
+    var rh=isFive?8:(on?6:5);
+    var col=on?(mi===minute-1?C.runeGlow:C.rune):(isFive?C.stoneHi:C.runeDim);
+    px(rx,railY+1+(8-rh),Math.max(2,segW-1),rh,col);
+    if(on&&isFive)px(rx,railY,Math.max(2,segW-1),1,C.runeGlow);
+  }
+  var tickX=railX+1+minute*segStep;
+  px(tickX-1,railY-3,3,3,C.ember);
+  px(tickX,railY-2,1,1,C.flameCore);
+  drawString("M",railX-7,railY+1,C.rune,1);
+  drawString(pad(minute),W-railX,railY+1,C.parch,1,"right");
+
+  // Ground edge lip
+  px(0,ground-2,W,2,C.stone);
+  px(0,ground,W,1,C.shadow);
+
+  // Side sconces
+  flameAt(16,ground-26,t,1);
+  flameAt(W-17,ground-26,t+110,1);
+
+  // Exit door (right) — opens during EXIT
+  var doorOpen=c.effect==="exit"?clamp((c.s-55)/3,0,1):0;
+  var doorX=W-30,doorY=ground-38,doorH=36,doorW=16;
+  px(doorX-2,doorY-3,doorW+4,3,C.stoneHi);
+  px(doorX,doorY,doorW,doorH,C.door);
+  px(doorX+1,doorY+2,Math.max(2,doorW-2-Math.round(doorOpen*11)),doorH-4,C.doorHi);
+  if(doorOpen>.15)px(doorX+doorW-2,doorY+5,3,doorH-10,C.runeDim);
+  px(doorX+doorW-5,doorY+17,2,3,C.gold);
+
+  // Entry gate (left)
+  px(12,ground-36,8,36,C.shadow);
+  px(13,ground-34,3,32,C.brickLo);
+
+  return{ground:ground,shelfY:shelfY};
+}
+
+function drawBoss(x,y,t,c){
+  var k=encounter.kind,pulse=reduced?0:Math.floor(t/220)%2,col=encounter.color;
+  var dead=c.boss<=0;
+  var drop=dead?Math.min(10,(c.s-46)*2.5):0;
+  y+=drop;
+  px(x-12,y+4,25,3,C.shadow);
+  if(dead&&c.s>48){
+    // Remains
+    px(x-10,y-2,20,4,col);
+    px(x-6,y-5,12,3,C.stoneLo);
+    return;
+  }
+  if(k===0||k===3){
+    px(x-7,y-18,15,19,col);
+    px(x-6,y-24,13,8,k===3?C.magic:C.stoneHi);
+    px(x-4,y-21,3,3,C.ember);px(x+3,y-21,3,3,C.ember);
+    px(x+9,y-16,4,16,C.gold);px(x+10,y-20,2,8,C.parch);
+    if(k===3){px(x-5,y-14,11,2,C.rune);px(x-5,y-10,11,2,C.rune)}
+  }else if(k===1){
+    px(x-12,y-10-pulse,25,13+pulse,col);
+    px(x-8,y-16-pulse,17,8,col);
+    px(x-5,y-11,3,3,C.ember);px(x+4,y-11,3,3,C.ember);
+    px(x-2,y+2,5,4,C.poison);
+  }else if(k===2){
+    px(x-6,y-22,13,10,C.bone);
+    px(x-8,y-13,17,13,C.bone);
+    px(x-4,y-19,3,3,C.danger);px(x+3,y-19,3,3,C.danger);
+    px(x-11,y-11,4,13,C.bone);px(x+8,y-11,4,13,C.bone);
+    px(x-2,y-16,5,2,C.shadow);
+  }else if(k===4){
+    px(x-14,y-11,27,13,col);
+    px(x+8,y-17,10,10,col);
+    px(x+14,y-14,3,3,C.danger);
+    for(var i=0;i<4;i++)px(x-10+i*6,y+2,4,4,C.stoneHi);
+    px(x-6,y-8,4,4,C.gold);px(x+2,y-8,4,4,C.gold);
+  }else if(k===5){
+    ctx.strokeStyle=col;ctx.lineWidth=2;
+    ctx.strokeRect(x-10-pulse,y-20-pulse,20+pulse*2,20+pulse*2);
+    px(x-6,y-16,13,13,C.magic);
+    px(x-3,y-13,7,7,C.ember);
+    if(!reduced){px(x-14,y-12-pulse*2,2,2,C.ice);px(x+13,y-8+pulse,2,2,C.ice)}
+  }else if(k===6){
+    px(x-14,y-13,29,15,C.gold);
+    px(x-13,y-10,27,11,C.stoneLo);
+    px(x-9,y-19,19,8,C.gold);
+    px(x-5,y-9,3,3,C.ember);px(x+5,y-9,3,3,C.ember);
+    px(x-1,y-5,4,6,C.danger);
+  }else if(k===7){
+    px(x-9,y-20,19,21,col);
+    px(x-6,y-26,13,8,C.ice);
+    px(x-4,y-21,3,3,C.magic);px(x+3,y-21,3,3,C.magic);
+    px(x-14,y-12,6,14,C.ice);px(x+9,y-12,6,14,C.ice);
+  }else{
+    px(x-10,y-19,21,20,col);
+    px(x-7,y-25,15,8,C.magic);
+    px(x-5,y-21,3,3,C.ember);px(x+4,y-21,3,3,C.ember);
+    px(x-16,y-10,7,4,C.gold);px(x+10,y-10,8,4,C.gold);
+  }
+}
+
+function drawHero(x,y,t,mode,lunge){
+  var bob=reduced?0:Math.floor(t/160)%2;
+  var weapon=Math.min(9,4+progress.gear.weapon.rank);
+  var armor=progress.gear.armor.rank>2?C.rune:C.cloak;
+  var armorHi=progress.gear.armor.rank>2?C.runeGlow:C.cloakHi;
+  y+=bob;
+  x+=lunge||0;
+  px(x-5,y-2,11,3,C.shadow);
+  // Head
+  px(x-3,y-14,7,6,C.hero);
+  px(x-2,y-12,2,2,C.shadow);px(x+2,y-12,2,2,C.shadow);
+  // Body
+  px(x-5,y-8,10,9,armor);
+  px(x-4,y-7,8,2,armorHi);
+  // Legs
+  px(x-4,y+1,4,4,C.hero);px(x+1,y+1,4,4,C.hero);
+  // Cape flick
+  if(!reduced)px(x-7,y-7+bob,2,8,C.cloak);
+  // Shield
+  if(progress.gear.armor.rank>0){
+    px(x-8,y-8,3,8,C.stoneHi);
+    px(x-7,y-7,1,5,C.rune);
+  }
+  // Weapon
+  px(x+5,y-8,2,8,C.gold);
+  px(x+6,y-9-weapon,2,weapon+4,C.parch);
+  if(mode==="loot")px(x-2,y-18,5,3,C.heal);
+  if(mode==="finish"){
+    px(x+8,y-16,6,2,C.ember);
+    px(x+10,y-20,2,6,C.flameCore);
+  }
+}
+
+function drawEffects(heroX,heroY,bossX,bossY,t,c){
+  var f=c.s%1;
+  if(c.effect==="hero"||c.effect==="finish"){
+    var reach=lerp(heroX+8,bossX-8,easeInOut(Math.min(1,f*1.6)));
+    var col=c.effect==="finish"?C.gold:C.parch;
+    for(var i=0;i<6;i++)px(reach+i*3,bossY-18+i*2-(f*4),2,2,col);
+    if(f<.25&&!reduced)spawnSparks(bossX,bossY-14,col,3);
+  }else if(c.effect==="boss"){
+    var reachB=lerp(bossX-8,heroX+6,easeInOut(Math.min(1,f*1.5)));
+    for(var j=0;j<6;j++)px(reachB-j*3,heroY-14-j+(f*3),2,2,encounter.color);
+    if(f<.25&&!reduced)spawnSparks(heroX,heroY-10,encounter.color,2);
+  }else if(c.effect==="magic"){
+    var r=10+f*14;
+    ctx.strokeStyle=C.magic;ctx.lineWidth=2;
+    ctx.strokeRect(bossX-r,bossY-18-r*.4,r*2,r*1.6);
+    px(bossX-1,bossY-22-f*8,3,3,C.runeGlow);
+  }else if(c.effect==="loot"){
+    var cy=heroY-28,cx=W/2|0;
+    var bob=reduced?0:Math.sin(t/180)*2;
+    px(cx-9,cy+bob,18,12,C.gold);
+    px(cx-8,cy+3+bob,16,8,C.stoneLo);
+    px(cx-2,cy+3+bob,4,5,C.ember);
+    px(cx-9,cy-2+bob,18,3,C.gold);
+    if(!reduced){px(cx-12,cy-4+bob,2,2,C.ember);px(cx+11,cy-6+bob,2,2,C.flameCore)}
+  }
+}
+
+function drawInWorldHUD(c,ground,bossX){
+  var stats=statsFor(progress);
+  var heroMax=72+stats.vitality*5;
+  var bossHP=Math.round(encounter.maxHP*c.boss);
+  var heroHP=Math.round(heroMax*c.hero);
+  var barW=portrait?58:88;
+  var hudY=ground+16;
+  if(hudY+18>H-4)hudY=Math.max(ground+12,H-20);
+
+  px(6,hudY,barW+10,16,C.mortar);
+  px(7,hudY+1,barW+8,14,C.brick);
+  px(8,hudY+2,barW+6,1,C.stoneHi);
+  drawString("HERO",9,hudY+2,C.heal,1);
+  bar(9,hudY+10,barW,5,c.hero,C.heal,C.blood);
+  drawString(String(heroHP),9+barW,hudY+2,C.parch,1,"right");
+
+  px(W-barW-16,hudY,barW+10,16,C.mortar);
+  px(W-barW-15,hudY+1,barW+8,14,C.brick);
+  px(W-barW-14,hudY+2,barW+6,1,C.stoneHi);
+  drawString("BOSS",W-9,hudY+2,encounter.color,1,"right");
+  bar(W-barW-12,hudY+10,barW,5,c.boss,encounter.color,C.blood);
+  drawString(String(bossHP),W-barW-12,hudY+2,C.parch,1);
+
+  var name=encounter.name.toUpperCase();
+  var nw=Math.min(W*.52,name.length*6+14);
+  var ny=ground-60;
+  px(bossX-nw/2,ny,nw,10,C.mortar);
+  px(bossX-nw/2+1,ny+1,nw-2,8,C.brick);
+  text(name.slice(0,18),bossX,ny+1,encounter.color,6,"center");
+
+  var midX=W/2|0,midW=Math.max(74,W-barW*2-32);
+  var phase=c.phase.length>10?c.phase.slice(0,10):c.phase;
+  var act=c.action.length>18?c.action.slice(0,16)+"..":c.action;
+  px(midX-midW/2,hudY,midW,16,C.mortar);
+  px(midX-midW/2+1,hudY+1,midW-2,14,C.brick);
+  text(phase,midX,hudY+2,C.rune,6,"center");
+  text(act,midX,hudY+9,c.effect==="loot"?C.gold:C.parch,5,"center");
+}
+
+function draw(now,t){
+  var c=combatAt(now);
+  var shakeX=0,shakeY=0;
+  if(!reduced&&c.shake>0){
+    var beat=Math.sin(t*0.045)*c.shake;
+    shakeX=(beat*1.2)|0;
+    shakeY=((Math.cos(t*0.06)*c.shake)|0);
+  }
+  ctx.save();
+  ctx.imageSmoothingEnabled=false;
+  ctx.scale(SCALE,SCALE);
+  ctx.translate(shakeX,shakeY);
+
+  var scene=drawChamber(now,t,c);
+  var ground=scene.ground;
+  var heroBattle=portrait?W*.34:W*.32;
+  var bossX=portrait?W*.70:W*.72;
+  var bossY=ground-10;
+  var heroX,lunge=0;
+
+  if(c.s<7){
+    heroX=lerp(22,heroBattle,easeInOut(c.s/7));
+  }else if(c.s>=55){
+    heroX=lerp(heroBattle,W+20,easeInOut((c.s-55)/5));
+  }else{
+    heroX=heroBattle;
+    if(c.effect==="hero"||c.effect==="finish"){
+      lunge=Math.sin(Math.min(1,c.s%1)*Math.PI)*(portrait?12:20);
+    }else if(c.effect==="boss"){
+      lunge=-Math.sin(Math.min(1,c.s%1)*Math.PI)*6;
+    }
+  }
+
+  var heroY=ground-6;
+  drawBoss(bossX,bossY,t,c);
+  drawHero(heroX,heroY,t,c.effect,lunge);
+  drawEffects(heroX+lunge,heroY,bossX,bossY,t,c);
+  tickEmbers(t);
+  tickSparks();
+  drawInWorldHUD(c,ground,bossX);
+
+  ctx.restore();
+
+  // Light vignette — keep rail/tablet edges readable
+  ctx.fillStyle="rgba(5,5,8,0.16)";
+  ctx.fillRect(0,0,CW,5);
+  ctx.fillRect(0,CH-5,CW,5);
+  ctx.fillRect(0,0,5,CH);
+  ctx.fillRect(CW-5,0,5,CH);
+}
+
+/* ── DOM / a11y / loop ──────────────────────────────────────────── */
+function updateA11y(now){
+  var id=minuteId(now);
+  if(id!==activeMinute){
+    var reward=syncProgress(id);
+    activeMinute=id;
+    encounter=encounterFor(id,progress.floor);
+    var infoNew=runInfo();
+    live.textContent=(reward?"Equipped "+reward.name+" plus "+reward.rank+". ":"")+
+      "Run "+infoNew.run+", floor "+infoNew.floor+". Miniboss "+encounter.name+". Local time "+pad(now.getHours())+":"+pad(now.getMinutes())+".";
+    saveProgress();
+  }
+  var c=combatAt(now),value=stamp(now),info=runInfo();
+  var stats=statsFor(progress),heroMax=72+stats.vitality*5;
+  var bossHP=Math.round(encounter.maxHP*c.boss),heroHP=Math.round(heroMax*c.hero);
+  exact.textContent=value;
+  exact.dateTime=now.toISOString();
+  if(now.getSeconds()!==lastAriaSecond){
+    lastAriaSecond=now.getSeconds();
+    canvas.setAttribute("aria-label",
+      "Exact local time "+value+". Wall braziers show hour "+((now.getHours()%12)||12)+
+      ", floor runes show minute "+now.getMinutes()+
+      ". Run "+info.run+", floor "+info.floor+". "+c.phase+". "+c.action+
+      ". Hero "+heroHP+" of "+heroMax+". "+encounter.name+" "+bossHP+" of "+encounter.maxHP+".");
+  }
+}
+
+function build(){
+  portrait=innerHeight>innerWidth*1.12;
+  W=portrait?202:360;
+  H=portrait?360:202;
+  SCALE=2;
+  CW=W*SCALE;
+  CH=H*SCALE;
+  canvas.width=CW;
+  canvas.height=CH;
+  if(ctx){
+    ctx.imageSmoothingEnabled=false;
+    draw(new Date(),reduced?0:performance.now());
+  }
+}
+
+function textFallback(){
+  var now=new Date();
+  updateA11y(now);
+  var value=stamp(now);
+  fallbackTime.textContent=value;
+  fallbackTime.dateTime=now.toISOString();
+  timer=setTimeout(textFallback,1000-Date.now()%1000+12);
+}
+
+function frame(t){
+  if(document.hidden){raf=0;return}
+  var interval=reduced?250:33;
+  if(t-lastDraw>=interval){
+    lastDraw=t;
+    var now=new Date();
+    updateA11y(now);
+    draw(now,reduced?0:t);
+  }
+  raf=requestAnimationFrame(frame);
+}
+
+var now=new Date();
+progress=loadProgress(minuteId(now));
+saveProgress();
+syncProgress(minuteId(now));
+activeMinute=-1;
+encounter=encounterFor(minuteId(now),progress.floor);
+if(catchupCount)live.textContent="Recovered "+catchupCount+" completed floors from the saved expedition.";
+
+if(!ctx){
+  canvas.hidden=true;
+  fallback.hidden=false;
+  textFallback();
+}else{
+  build();
+  updateA11y(now);
+  raf=requestAnimationFrame(frame);
+}
+
+var resizeTimer;
+addEventListener("resize",function(){
+  clearTimeout(resizeTimer);
+  resizeTimer=setTimeout(build,100);
+});
+if(motion.addEventListener){
+  motion.addEventListener("change",function(e){reduced=e.matches;lastDraw=0;sparks.length=0;embers.length=0});
+}
+document.addEventListener("visibilitychange",function(){
+  if(document.hidden){
+    if(raf)cancelAnimationFrame(raf);raf=0;
+    clearTimeout(timer);timer=0;
+  }else if(ctx&&!raf){
+    lastDraw=0;raf=requestAnimationFrame(frame);
+  }else if(!ctx&&!timer)textFallback();
+});
+
+}());
+</script>
+
+
+
+
+
+</body>
+</html>

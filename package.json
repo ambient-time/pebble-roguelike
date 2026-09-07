@@ -1,0 +1,30 @@
+{
+  "name": "roguelike",
+  "author": "Luke Steuber",
+  "version": "0.1.0",
+  "private": true,
+  "keywords": [
+    "pebble-app"
+  ],
+  "dependencies": {},
+  "pebble": {
+    "displayName": "Dungeon Loop",
+    "companyName": "Luke Steuber",
+    "uuid": "ed255e40-1522-4ab7-8855-7c2fa30a1c80",
+    "sdkVersion": "3",
+    "enableMultiJS": true,
+    "targetPlatforms": [
+      "basalt",
+      "diorite",
+      "emery",
+      "flint"
+    ],
+    "watchapp": {
+      "watchface": true
+    },
+    "messageKeys": [],
+    "resources": {
+      "media": []
+    }
+  }
+}
