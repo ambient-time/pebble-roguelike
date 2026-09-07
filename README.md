@@ -38,7 +38,8 @@ The sanitizer-backed host test covers all 86,400 states of a day: hour/minute
 encoding, phase boundaries, bounded hero positions, stable encounters within
 a minute, and new encounters at rollovers. Native logs include
 `Dungeon time=HH:MM:SS kind=N phase=N heap=N` for capture verification.
-Emulator visual evidence and physical testing remain pending.
+Emulator captures and natural noon/midnight rollover checks passed on all four
+targets. Physical testing remains pending.
 
 ## Source
 
