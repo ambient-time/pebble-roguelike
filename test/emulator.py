@@ -97,7 +97,7 @@ def run(platform,fresh=False,record=0):
         time.sleep(2)
         hero=grab('hero',(10,8,0));time.sleep(2.1)
         later=grab('later');assert hero!=later,'No second-driven movement'
-        for name,clock in [('noon',(12,0,0)),('quarter',(3,15,45)),('evening',(18,30,30))]:
+        for name,clock in [('noon',(12,0,0)),('quarter',(3,15,45)),('evening',(18,30,30)),('floor-room',(17,29,15))]:
             grab(name,clock)
         for name,clock,expected in [('noon',(11,59,58),'time=12:00:'),('midnight',(23,59,58),'time=00:00:')]:
             grab('before-'+name,clock)

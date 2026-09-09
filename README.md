@@ -1,18 +1,19 @@
 # Dungeon Loop
 
-A tiny adventurer meets a new dungeon creature every minute. Count the lit
-braziers for the hour. Read the glowing floor stones for the minute: each full
-row is ten, followed by the stones lit in the next row. Twelve burning braziers
-means twelve o'clock; no glowing floor stones means minute zero.
+A tiny adventurer meets a new dungeon creature every minute. Read the large
+numbers over the chamber: FLOOR is the local hour from 00 to 23, and ROOM is
+the minute from 00 to 59. FLOOR 17 / ROOM 29 means 17:29. The glowing floor
+stones also retain the minute count: each full row is ten, followed by the
+stones lit in the next row.
 
 The seconds move the encounter forward. The hero enters during seconds 00–06,
 fights during 07–41, finishes the creature during 42–48, collects treasure during
 49–54, and leaves during 55–59. These scenes show the minute's progress; they
 are not an exact seconds display. A new chamber encounter starts at second zero.
 
-This is an autonomous watchface, with no buttons, score, health bars, numerical
-time plaque, or secondary digital clock. Its local 12-hour time encoding keeps
-the braziers and runes from Luke Steuber's Pixel Dungeon source. The minute's
+This is an autonomous watchface, with no buttons, score or health bars. The
+owner-requested floor and room numbers replace the counted hour braziers to
+make time easier to read. The runes remain from Luke Steuber's Pixel Dungeon source. The minute's
 creature is determined from the day and local hour/minute, so opening the face
 mid-minute resumes that encounter immediately. There is no saved game, loot
 inventory, network, or catch-up simulation.
@@ -47,6 +48,7 @@ Copyright 2026 Luke Steuber. MIT License.
 
 The complete supplied [Pixel Dungeon source](https://datapoems.io/clocks/pixel-dungeon/)
 is preserved in `reference/source.html` with a checksum. This native adaptation
-retains its minute-long encounter, hour braziers, minute runes, and enter/fight/
-loot/exit sequence. The giant clock tablet, text HUD, persistent leveling,
+retains its minute-long encounter, minute runes, and enter/fight/loot/exit
+sequence. Version 0.1.1 replaces the braziers with the requested floor/hour and
+room/minute numbers. The giant clock tablet, unrelated text HUD, persistent leveling,
 procedural sparks, and subsecond browser animation are omitted.

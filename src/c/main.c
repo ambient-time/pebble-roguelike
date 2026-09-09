@@ -18,6 +18,23 @@ static Window *window;static Layer *canvas;static bool active;static int w,h,ox,
 // Every scene pixel is exactly 2x2 device pixels, including Emery. Larger watches
 // show more chamber around the same crisp sprites instead of stretched pixels.
 static void px(GContext*c,int x,int y,int ww,int hh,GColor col){graphics_context_set_fill_color(c,col);graphics_fill_rect(c,GRect(ox+x*2,oy+y*2,ww*2,hh*2),0,GCornerNone);}
+static const uint8_t digits[10][7]={
+ {14,17,19,21,25,17,14},{4,12,4,4,4,4,14},{14,17,1,2,4,8,31},
+ {30,1,1,14,1,1,30},{2,6,10,18,31,2,2},{31,16,16,30,1,1,30},
+ {14,16,16,30,17,17,14},{31,1,2,4,8,8,8},{14,17,17,14,17,17,14},
+ {14,17,17,15,1,1,14}
+};
+static void glyph(GContext*c,int x,int y,const uint8_t rows[7],int scale,GColor color){
+ for(int r=0;r<7;r++)for(int col=0;col<5;col++)if(rows[r]&(1<<(4-col)))px(c,x+col*scale,y+r*scale,scale,scale,color);
+}
+static void label(GContext*c,int x,int y,const char*text){
+ static const uint8_t f[7]={31,16,16,30,16,16,16},l[7]={16,16,16,16,16,16,31},o[7]={14,17,17,17,17,17,14},r[7]={30,17,17,30,20,18,17},m[7]={17,27,21,21,17,17,17};
+ for(;*text;text++,x+=6){const uint8_t*rows=*text=='F'?f:*text=='L'?l:*text=='O'?o:*text=='R'?r:m;glyph(c,x,y,rows,1,GOLD);}
+}
+static void room_number(GContext*c,int center,int value){
+ glyph(c,center-11,13,digits[value/10],2,GColorWhite);
+ glyph(c,center+1,13,digits[value%10],2,GColorWhite);
+}
 static void hero(GContext*c,int x,int y,int s){
  px(c,x-3,y-10,6,4,GColorWhite);px(c,x+1,y-9,1,1,GColorBlack);
  px(c,x-4,y-6,7,6,CLOAK);px(c,x-2,y-5,3,1,GColorBlack);
@@ -40,9 +57,10 @@ static void draw(Layer*l,GContext*c){
  graphics_context_set_antialiased(c,false);graphics_context_set_fill_color(c,GColorBlack);graphics_fill_rect(c,layer_get_bounds(l),0,GCornerNone);
  int inset=(w-72)/2,ground=h-29;px(c,1,1,w-2,ground-1,STONE);
  for(int y=2;y<ground;y+=7){px(c,1,y,w-2,1,SEAM);for(int x=2+(y%2)*5;x<w-1;x+=12)px(c,x,y,1,6,SEAM);}
- // A dark recess makes all twelve braziers countable in either palette.
- px(c,inset+4,3,64,24,GColorBlack);
- for(int i=0;i<12;i++){int x=inset+9+(i%6)*10,y=10+(i/6)*11;px(c,x-2,y+2,5,1,SEAM);if(i<a.hour){px(c,x-1,y-2,3,4,GOLD);px(c,x,y-3-(a.second+i)%2,1,3,GColorWhite);}else px(c,x,y+1,1,1,SEAM);}
+ // The owner-requested floor and room numbers make local 24-hour time direct.
+ px(c,inset+3,2,66,26,GColorBlack);
+ label(c,inset+6,4,"FLOOR");label(c,inset+41,4,"ROOM");
+ room_number(c,inset+20,a.hour);room_number(c,inset+52,a.minute);
  // Open stone arches at left and right, only the exit opens after loot.
  px(c,inset+3,ground-17,8,17,GColorBlack);px(c,inset+2,ground-19,10,2,SEAM);
  px(c,inset+60,ground-19,10,19,GColorBlack);px(c,inset+59,ground-21,12,2,SEAM);
