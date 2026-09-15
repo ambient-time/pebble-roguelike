@@ -6,13 +6,15 @@ the minute from 00 to 59. FLOOR 17 / ROOM 29 means 17:29. The glowing floor
 stones also retain the minute count: each full row is ten, followed by the
 stones lit in the next row.
 
+[![Get Dungeon Loop](https://img.shields.io/badge/Pebble-Get_Dungeon_Loop-2563eb?style=flat-square)](https://apps.repebble.com/80ca097fbccb4739b594e458) [![MIT code license](https://img.shields.io/badge/Code-MIT-181717?style=flat-square)](LICENSE) [![Ambient Time collection](https://img.shields.io/badge/Ambient_Time-Collection-181717?style=flat-square)](https://ambient-time.com/watch/pebble/)
+
 The seconds move the encounter forward. The hero enters during seconds 00–06,
 fights during 07–41, finishes the creature during 42–48, collects treasure during
 49–54, and leaves during 55–59. These scenes show the minute's progress; they
 are not an exact seconds display. A new chamber encounter starts at second zero.
 
 This is an autonomous watchface, with no buttons, score or health bars. The
-owner-requested floor and room numbers replace the counted hour braziers to
+floor and room numbers replace the counted hour braziers to
 make time easier to read. The runes remain from Luke Steuber's Pixel Dungeon source. The minute's
 creature is determined from the day and local hour/minute, so opening the face
 mid-minute resumes that encounter immediately. There is no saved game, loot
@@ -49,6 +51,13 @@ Copyright 2026 Luke Steuber. MIT License.
 The complete supplied [Pixel Dungeon source](https://datapoems.io/clocks/pixel-dungeon/)
 is preserved in `reference/source.html` with a checksum. This native adaptation
 retains its minute-long encounter, minute runes, and enter/fight/loot/exit
-sequence. Version 0.1.1 replaces the braziers with the requested floor/hour and
+sequence. Version 0.1.1 replaces the braziers with floor/hour and
 room/minute numbers. The giant clock tablet, unrelated text HUD, persistent leveling,
 procedural sparks, and subsecond browser animation are omitted.
+
+## Around here
+
+[Luke Steuber](https://github.com/lukeslp) · [Data Poems](https://github.com/data-poems) · [Ambient Time](https://github.com/ambient-time) · [Actually Useful AI](https://github.com/actually-useful-ai) · [One Impossible Thing](https://github.com/one-impossible-thing)
+
+Made by [Luke Steuber](https://lukesteuber.com). Questions or collaboration:
+[luke@lukesteuber.com](mailto:luke@lukesteuber.com).
